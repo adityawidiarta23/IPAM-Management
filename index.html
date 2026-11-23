@@ -29,6 +29,9 @@
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
 
+  <!-- SheetJS: pembuatan workbook .xlsx (fallback ke CSV bila gagal dimuat) -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
   <style>
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #090d16; }
@@ -156,9 +159,9 @@
             <i data-lucide="plus" class="w-3.5 h-3.5"></i>
             <span>Tambah POP</span>
           </button>
-          <button onclick="exportHostsCSV()" title="Export Semua IP Host ke CSV" class="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-slate-300 hover:text-white transition">
+          <button onclick="exportAllXLSX()" title="Export Laporan Lengkap (.xlsx)" class="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-slate-300 hover:text-white transition">
             <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 text-emerald-400"></i>
-            <span class="hidden xl:inline">CSV</span>
+            <span class="hidden xl:inline">Excel</span>
           </button>
           <button onclick="downloadJSONBackup()" title="Backup Database JSON" class="hidden md:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-slate-300 hover:text-white transition">
             <i data-lucide="download" class="w-3.5 h-3.5 text-cyan-400"></i>
@@ -568,7 +571,10 @@
 
       // Calculator
       calcIp: '10.10.120.15',
-      calcPrefix: 24
+      calcPrefix: 24,
+
+      // Export
+      csvDelimiter: ','
     };
 
     function loadData() {
@@ -2096,29 +2102,86 @@
     }
 
     function renderBackupView() {
+      const sum = getFleetSummary();
+      const util = getUtilColor(sum.pct);
+      const delimiter = uiState.csvDelimiter === ';' ? ';' : ',';
+      const csvBtn = 'w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-sm text-slate-200 transition';
+
       return `
-        <div class="space-y-6 max-w-4xl">
+        <div class="space-y-6 max-w-5xl">
           <div>
             <h2 class="text-xl lg:text-2xl font-bold text-white tracking-tight">Export & Backup Database NOC</h2>
-            <p class="text-sm text-slate-400 mt-0.5">Ekspor laporan CSV (mencakup Regional & POP) atau cadangkan seluruh database ke JSON.</p>
+            <p class="text-sm text-slate-400 mt-0.5">Unduh laporan siap-presentasi, ekspor CSV per modul, atau cadangkan seluruh database ke JSON.</p>
           </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-3">
-              <h3 class="text-base font-semibold text-white flex items-center gap-2"><i data-lucide="file-spreadsheet" class="w-4 h-4 text-emerald-400"></i> Export Laporan CSV</h3>
-              <button onclick="exportPopsCSV()" class="w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-sm text-slate-200 transition"><span>Export Daftar Regional & POP (${db.pops.length})</span><i data-lucide="download" class="w-4 h-4 text-emerald-400"></i></button>
-              <button onclick="exportSubnetsCSV()" class="w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-sm text-slate-200 transition"><span>Export Daftar Subnet (${db.subnets.length})</span><i data-lucide="download" class="w-4 h-4 text-emerald-400"></i></button>
-              <button onclick="exportVlansCSV()" class="w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-sm text-slate-200 transition"><span>Export Daftar VLAN (${db.vlans.length})</span><i data-lucide="download" class="w-4 h-4 text-emerald-400"></i></button>
-              <button onclick="exportHostsCSV()" class="w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-sm text-slate-200 transition"><span>Export Semua IP Host (${db.hosts.length})</span><i data-lucide="download" class="w-4 h-4 text-emerald-400"></i></button>
+
+          <!-- Ringkasan dataset -->
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl px-4 py-3">
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Regional & POP</div>
+              <div class="mt-1 font-mono text-xl font-bold text-white">${db.regionals.length}<span class="text-sm font-medium text-slate-500"> / ${db.pops.length} POP</span></div>
             </div>
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl px-4 py-3">
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Subnet</div>
+              <div class="mt-1 font-mono text-xl font-bold text-white">${db.subnets.length}<span class="text-sm font-medium text-slate-500"> · ${fmtNum(sum.usable)} IP usable</span></div>
+            </div>
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl px-4 py-3">
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">VLAN</div>
+              <div class="mt-1 font-mono text-xl font-bold text-white">${db.vlans.length}<span class="text-sm font-medium text-slate-500"> segmen</span></div>
+            </div>
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl px-4 py-3">
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">IP Host</div>
+              <div class="mt-1 font-mono text-xl font-bold text-white">${db.hosts.length}<span class="text-sm font-medium ${util.text}"> · ${sum.pct}% terpakai</span></div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <!-- Laporan profesional -->
             <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-3">
-              <h3 class="text-base font-semibold text-white flex items-center gap-2"><i data-lucide="database-backup" class="w-4 h-4 text-cyan-400"></i> Backup & Restore JSON</h3>
-              <button onclick="downloadJSONBackup()" class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium transition"><i data-lucide="download" class="w-4 h-4"></i> Download Backup JSON</button>
-              <button onclick="triggerRestoreJSON()" class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-sm font-medium transition"><i data-lucide="upload" class="w-4 h-4 text-amber-400"></i> Restore dari File JSON</button>
-              <button onclick="confirmResetDemoData()" class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 text-sm font-medium transition"><i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset ke Data Demo Default</button>
+              <h3 class="text-base font-semibold text-white flex items-center gap-2"><i data-lucide="file-spreadsheet" class="w-4 h-4 text-emerald-400"></i> Laporan Profesional</h3>
+              <p class="text-xs text-slate-400 leading-relaxed">Satu workbook Excel berisi 6 sheet (Ringkasan, Regional, POP, Subnet, VLAN, IP Host) dengan header konsisten, lebar kolom otomatis, angka terformat, dan filter data.</p>
+              <button onclick="exportAllXLSX()" class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition"><i data-lucide="file-spreadsheet" class="w-4 h-4"></i> Download Laporan Excel (.xlsx)</button>
+              <button onclick="exportPrintableReport()" class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-sm font-medium transition"><i data-lucide="printer" class="w-4 h-4 text-cyan-400"></i> Cetak / Simpan PDF</button>
+              <div class="flex flex-wrap gap-1.5 pt-1">
+                ${['Ringkasan', 'Regional', 'POP', 'Subnet', 'VLAN', 'IP Host'].map(s => `<span class="px-2 py-1 rounded-md bg-slate-950 border border-slate-800 text-[10px] font-mono text-slate-400">${s}</span>`).join('')}
+              </div>
+              <p class="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed"><i data-lucide="info" class="w-3 h-3 mt-0.5 shrink-0"></i> Laporan cetak memakai layout A4 landscape dengan header tabel berulang, siap untuk audit & arsip.</p>
+            </div>
+
+            <!-- CSV per modul -->
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-3">
+              <h3 class="text-base font-semibold text-white flex items-center gap-2"><i data-lucide="file-down" class="w-4 h-4 text-emerald-400"></i> Export CSV per Modul</h3>
+              <p class="text-xs text-slate-400 leading-relaxed">UTF-8 dengan BOM, urutan baris konsisten, dan escaping aman sehingga tidak berantakan saat dibuka di Excel maupun Google Sheets.</p>
+              <div class="flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                <label for="csv-delimiter" class="text-xs text-slate-300">Pemisah kolom</label>
+                <select id="csv-delimiter" onchange="setCsvDelimiter(this.value)" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 outline-none focus:border-cyan-500">
+                  <option value="," ${delimiter === ',' ? 'selected' : ''}>Koma (,)</option>
+                  <option value=";" ${delimiter === ';' ? 'selected' : ''}>Titik koma (;) — Excel ID</option>
+                </select>
+              </div>
+              <button onclick="exportPopsCSV()" class="${csvBtn}"><span>Regional & POP <span class="text-slate-500">(${db.pops.length})</span></span><i data-lucide="download" class="w-4 h-4 text-emerald-400"></i></button>
+              <button onclick="exportSubnetsCSV()" class="${csvBtn}"><span>Subnet & Utilisasi <span class="text-slate-500">(${db.subnets.length})</span></span><i data-lucide="download" class="w-4 h-4 text-emerald-400"></i></button>
+              <button onclick="exportVlansCSV()" class="${csvBtn}"><span>Manajemen VLAN <span class="text-slate-500">(${db.vlans.length})</span></span><i data-lucide="download" class="w-4 h-4 text-emerald-400"></i></button>
+              <button onclick="exportHostsCSV()" class="${csvBtn}"><span>Alokasi IP Host <span class="text-slate-500">(${db.hosts.length})</span></span><i data-lucide="download" class="w-4 h-4 text-emerald-400"></i></button>
+            </div>
+          </div>
+
+          <!-- Backup JSON -->
+          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-3">
+            <h3 class="text-base font-semibold text-white flex items-center gap-2"><i data-lucide="database-backup" class="w-4 h-4 text-cyan-400"></i> Backup & Restore JSON</h3>
+            <p class="text-xs text-slate-400 leading-relaxed">File backup menyertakan metadata (aplikasi, waktu ekspor, dan jumlah data) sehingga aman diarsipkan. Restore menerima file backup versi lama maupun baru.</p>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button onclick="downloadJSONBackup()" class="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium transition"><i data-lucide="download" class="w-4 h-4"></i> Download Backup JSON</button>
+              <button onclick="triggerRestoreJSON()" class="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-sm font-medium transition"><i data-lucide="upload" class="w-4 h-4 text-amber-400"></i> Restore dari File JSON</button>
+              <button onclick="confirmResetDemoData()" class="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 text-sm font-medium transition"><i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset ke Data Demo</button>
             </div>
           </div>
         </div>
       `;
+    }
+
+    function setCsvDelimiter(value) {
+      uiState.csvDelimiter = value === ';' ? ';' : ',';
+      showToast(`Pemisah CSV diubah ke ${uiState.csvDelimiter === ';' ? 'titik koma (;)' : 'koma (,)'}.`, 'info');
     }
 
     /**
@@ -2861,9 +2924,32 @@
 
     /**
      * =========================================================================
-     * 13. EXPORT CSV (DENGAN KOLOM REGIONAL & POP), BACKUP JSON, & RESET
+     * 13. EXPORT & BACKUP — EXCEL (.XLSX), CSV, LAPORAN CETAK/PDF, & JSON
      * =========================================================================
      */
+    const EXPORT_APP = {
+      name: 'NetCore IPAM & VLAN Manager',
+      org: 'NOC Regional & VLAN',
+      version: '2.0',
+      schema: 2
+    };
+
+    function exportStamp() {
+      const d = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const fileDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      const fileTime = `${pad(d.getHours())}${pad(d.getMinutes())}`;
+      return {
+        file: `${fileDate}_${fileTime}`,
+        date: fileDate,
+        display: d.toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' })
+      };
+    }
+
+    function fmtNum(n) {
+      return Number(n || 0).toLocaleString('id-ID');
+    }
+
     function downloadFile(content, filename, mimeType) {
       const blob = new Blob([content], { type: mimeType });
       const url = URL.createObjectURL(blob);
@@ -2873,61 +2959,582 @@
       document.body.removeChild(a); URL.revokeObjectURL(url);
     }
 
-    function toCSVRow(arr) {
-      return arr.map(val => `"${String(val === null || val === undefined ? '' : val).replace(/"/g, '""')}"`).join(',');
-    }
-
-    function exportPopsCSV() {
-      const header = ['Kode POP', 'Nama POP', 'Regional', 'Area', 'Tipe', 'Status', 'Alamat', 'Jumlah Subnet', 'Jumlah VLAN', 'Jumlah Host', 'Catatan'];
-      const rows = db.pops.map(p => {
-        const reg = getRegionalById(p.regionalId);
-        const st = getPopStats(p.id);
-        return toCSVRow([p.code, p.name, reg ? reg.name : '-', p.area, p.type, p.status, p.address, st.subnets.length, st.vlans.length, st.hosts.length, p.notes]);
+    function getFleetSummary() {
+      let usable = 0, used = 0;
+      db.subnets.forEach(s => {
+        const st = getSubnetStats(s);
+        usable += st.totalUsable;
+        used += st.usedCount;
       });
-      downloadFile([toCSVRow(header), ...rows].join('\n'), `ipam-pops-${new Date().toISOString().slice(0,10)}.csv`, 'text/csv;charset=utf-8;');
-      showToast('Data Regional & POP berhasil diekspor ke CSV.');
+      return {
+        regionals: db.regionals.length,
+        pops: db.pops.length,
+        subnets: db.subnets.length,
+        vlans: db.vlans.length,
+        hosts: db.hosts.length,
+        usable, used,
+        free: Math.max(0, usable - used),
+        pct: usable > 0 ? Math.round((used / usable) * 100) : 0
+      };
     }
 
-    function exportHostsCSV() {
-      const header = ['IP Address', 'Status', 'Hostname', 'Perangkat', 'MAC Address', 'Interface', 'Regional', 'POP', 'Subnet CIDR', 'VLAN ID', 'PIC', 'Catatan'];
-      const rows = db.hosts.map(h => {
-        const sub = db.subnets.find(s => s.id === h.subnetId);
-        const reg = sub ? getRegionalById(sub.regionalId) : null;
-        const pop = sub ? getPopById(sub.popId) : null;
-        const vlan = sub ? getVlanById(sub.vlanRefId) : null;
-        return toCSVRow([h.ip, h.status, h.hostname, h.vendor, h.mac, h.iface, reg ? reg.name : '-', pop ? pop.name : '-', sub ? sub.cidr : '-', vlan ? vlan.vlanId : '-', h.pic, h.notes]);
+    /* ------------------------------------------------------------------
+     * Dataset ekspor: satu sumber data ter-normalisasi & terurut untuk
+     * Excel, CSV, maupun laporan cetak agar angka antar-format konsisten.
+     * ------------------------------------------------------------------ */
+    function buildExportRecords() {
+      const regOrder = new Map(db.regionals.map((r, i) => [r.id, i]));
+      const popOrder = new Map(db.pops.map((p, i) => [p.id, i]));
+      const subnetById = new Map(db.subnets.map(s => [s.id, s]));
+      const regIdx = id => (regOrder.has(id) ? regOrder.get(id) : 1e6);
+      const popIdx = id => (popOrder.has(id) ? popOrder.get(id) : 1e6);
+      const netIdx = s => { const c = parseCIDR(s.cidr); return c ? c.networkInt : Number.MAX_SAFE_INTEGER; };
+      const ipIdx = h => { const v = ipToInt(h.ip); return v === null ? Number.MAX_SAFE_INTEGER : v; };
+
+      const regional = db.regionals.slice()
+        .sort((a, b) => regIdx(a.id) - regIdx(b.id))
+        .map(r => {
+          const st = getRegionalStats(r.id);
+          return {
+            code: r.code || '', name: r.name || '', areas: r.areas || '', description: r.description || '',
+            pops: st.pops.length, subnets: st.subnets.length, vlans: st.vlans.length, hosts: st.hosts.length,
+            usable: st.totalUsable, used: st.totalUsed,
+            free: Math.max(0, st.totalUsable - st.totalUsed), pct: st.pct
+          };
+        });
+
+      const pop = db.pops.slice()
+        .sort((a, b) => regIdx(a.regionalId) - regIdx(b.regionalId) || popIdx(a.id) - popIdx(b.id))
+        .map(p => {
+          const reg = getRegionalById(p.regionalId);
+          const st = getPopStats(p.id);
+          let usable = 0, used = 0;
+          st.subnets.forEach(s => { const x = getSubnetStats(s); usable += x.totalUsable; used += x.usedCount; });
+          return {
+            regionCode: reg ? reg.code : '', regionName: reg ? reg.name : '',
+            code: p.code || '', name: p.name || '', type: p.type || '', status: p.status || '',
+            area: p.area || '', address: p.address || '',
+            subnets: st.subnets.length, vlans: st.vlans.length, hosts: st.hosts.length,
+            usable, used, free: Math.max(0, usable - used),
+            pct: usable > 0 ? Math.round((used / usable) * 100) : 0,
+            notes: p.notes || ''
+          };
+        });
+
+      const subnet = db.subnets.slice()
+        .sort((a, b) => regIdx(a.regionalId) - regIdx(b.regionalId) || popIdx(a.popId) - popIdx(b.popId) || netIdx(a) - netIdx(b))
+        .map(s => {
+          const { calc, usedCount, totalUsable, pct } = getSubnetStats(s);
+          const reg = getRegionalById(s.regionalId);
+          const pop = getPopById(s.popId);
+          const vlan = getVlanById(s.vlanRefId);
+          return {
+            regionName: reg ? reg.name : '', popName: pop ? pop.name : '',
+            cidr: s.cidr || '', name: s.name || '',
+            vlanId: vlan ? vlan.vlanId : '', vlanName: vlan ? vlan.name : '',
+            gateway: s.gateway || '', netmask: calc ? calc.netmask : '', broadcast: calc ? calc.broadcast : '',
+            usable: totalUsable, used: usedCount, free: Math.max(0, totalUsable - usedCount),
+            pct, health: getUtilColor(pct).label, notes: s.notes || ''
+          };
+        });
+
+      const vlan = db.vlans.slice()
+        .sort((a, b) => regIdx(a.regionalId) - regIdx(b.regionalId) || popIdx(a.popId) - popIdx(b.popId) || Number(a.vlanId) - Number(b.vlanId))
+        .map(v => {
+          const reg = getRegionalById(v.regionalId);
+          const pop = getPopById(v.popId);
+          return {
+            regionName: reg ? reg.name : '', popName: pop ? pop.name : '',
+            vlanId: v.vlanId, name: v.name || '', category: v.category || '',
+            gatewaySvi: v.gatewaySvi || '', status: v.status || '', coreDevice: v.coreDevice || '',
+            trunkPorts: v.trunkPorts || '', accessPorts: v.accessPorts || '', notes: v.notes || ''
+          };
+        });
+
+      const host = db.hosts.slice()
+        .sort((a, b) => {
+          const sa = subnetById.get(a.subnetId), sb = subnetById.get(b.subnetId);
+          return regIdx(sa ? sa.regionalId : '') - regIdx(sb ? sb.regionalId : '') ||
+            popIdx(sa ? sa.popId : '') - popIdx(sb ? sb.popId : '') ||
+            (sa ? netIdx(sa) : 0) - (sb ? netIdx(sb) : 0) ||
+            ipIdx(a) - ipIdx(b);
+        })
+        .map(h => {
+          const sub = subnetById.get(h.subnetId);
+          const reg = sub ? getRegionalById(sub.regionalId) : null;
+          const pop = sub ? getPopById(sub.popId) : null;
+          const vlan = sub ? getVlanById(sub.vlanRefId) : null;
+          return {
+            regionName: reg ? reg.name : '', popName: pop ? pop.name : '',
+            cidr: sub ? sub.cidr : '', vlanId: vlan ? vlan.vlanId : '',
+            ip: h.ip || '', hostname: h.hostname || '', status: h.status || '',
+            vendor: h.vendor || '', mac: h.mac || '', iface: h.iface || '',
+            pic: h.pic || '', notes: h.notes || ''
+          };
+        });
+
+      return { regional, pop, subnet, vlan, host };
+    }
+
+    /* Definisi kolom bersama untuk Excel & CSV */
+    const EXPORT_COLUMNS = {
+      regional: [
+        { key: 'code', label: 'Kode Regional' },
+        { key: 'name', label: 'Nama Regional' },
+        { key: 'areas', label: 'Cakupan Area' },
+        { key: 'pops', label: 'Jumlah POP', type: 'num' },
+        { key: 'subnets', label: 'Jumlah Subnet', type: 'num' },
+        { key: 'vlans', label: 'Jumlah VLAN', type: 'num' },
+        { key: 'hosts', label: 'Entri Host', type: 'num' },
+        { key: 'usable', label: 'Kapasitas IP', type: 'num' },
+        { key: 'used', label: 'IP Terpakai', type: 'num' },
+        { key: 'free', label: 'IP Tersedia', type: 'num' },
+        { key: 'pct', label: 'Utilisasi', type: 'pct' },
+        { key: 'description', label: 'Deskripsi' }
+      ],
+      pop: [
+        { key: 'regionName', label: 'Regional' },
+        { key: 'code', label: 'Kode POP' },
+        { key: 'name', label: 'Nama POP' },
+        { key: 'type', label: 'Tipe' },
+        { key: 'status', label: 'Status' },
+        { key: 'area', label: 'Area' },
+        { key: 'address', label: 'Alamat' },
+        { key: 'subnets', label: 'Jumlah Subnet', type: 'num' },
+        { key: 'vlans', label: 'Jumlah VLAN', type: 'num' },
+        { key: 'hosts', label: 'Entri Host', type: 'num' },
+        { key: 'usable', label: 'Kapasitas IP', type: 'num' },
+        { key: 'used', label: 'IP Terpakai', type: 'num' },
+        { key: 'pct', label: 'Utilisasi', type: 'pct' },
+        { key: 'notes', label: 'Catatan' }
+      ],
+      subnet: [
+        { key: 'regionName', label: 'Regional' },
+        { key: 'popName', label: 'POP' },
+        { key: 'cidr', label: 'Network / CIDR' },
+        { key: 'name', label: 'Nama Subnet' },
+        { key: 'vlanId', label: 'VLAN ID', type: 'num' },
+        { key: 'vlanName', label: 'Nama VLAN' },
+        { key: 'gateway', label: 'Gateway' },
+        { key: 'netmask', label: 'Netmask' },
+        { key: 'broadcast', label: 'Broadcast' },
+        { key: 'usable', label: 'Kapasitas', type: 'num' },
+        { key: 'used', label: 'Terpakai', type: 'num' },
+        { key: 'free', label: 'Tersedia', type: 'num' },
+        { key: 'pct', label: 'Utilisasi', type: 'pct' },
+        { key: 'health', label: 'Status Utilisasi' },
+        { key: 'notes', label: 'Catatan' }
+      ],
+      vlan: [
+        { key: 'regionName', label: 'Regional' },
+        { key: 'popName', label: 'POP' },
+        { key: 'vlanId', label: 'VLAN ID', type: 'num' },
+        { key: 'name', label: 'Nama VLAN' },
+        { key: 'category', label: 'Kategori' },
+        { key: 'gatewaySvi', label: 'Gateway / SVI' },
+        { key: 'status', label: 'Status' },
+        { key: 'coreDevice', label: 'Perangkat Utama' },
+        { key: 'trunkPorts', label: 'Trunk Ports' },
+        { key: 'accessPorts', label: 'Access Ports' },
+        { key: 'notes', label: 'Catatan' }
+      ],
+      host: [
+        { key: 'regionName', label: 'Regional' },
+        { key: 'popName', label: 'POP' },
+        { key: 'cidr', label: 'Subnet CIDR' },
+        { key: 'vlanId', label: 'VLAN ID', type: 'num' },
+        { key: 'ip', label: 'IP Address' },
+        { key: 'hostname', label: 'Hostname' },
+        { key: 'status', label: 'Status' },
+        { key: 'vendor', label: 'Perangkat' },
+        { key: 'mac', label: 'MAC Address' },
+        { key: 'iface', label: 'Interface' },
+        { key: 'pic', label: 'PIC' },
+        { key: 'notes', label: 'Catatan' }
+      ]
+    };
+
+    /* ------------------------------ CSV ------------------------------- */
+    function csvEscape(value, delim, isNumeric) {
+      let s = value === null || value === undefined ? '' : String(value);
+      if (!s) return '';
+      if (!isNumeric && /^[=+@\t]/.test(s)) s = "'" + s;
+      return (s.includes(delim) || /["\r\n]/.test(s)) ? `"${s.replace(/"/g, '""')}"` : s;
+    }
+
+    function exportCSV(kind, filenamePrefix) {
+      const cols = EXPORT_COLUMNS[kind];
+      const records = buildExportRecords()[kind];
+      const delim = uiState.csvDelimiter === ';' ? ';' : ',';
+      const lines = [cols.map(c => csvEscape(c.label, delim, true)).join(delim)];
+      records.forEach(rec => {
+        lines.push(cols.map(c => csvEscape(rec[c.key], delim, c.type === 'num' || c.type === 'pct')).join(delim));
       });
-      downloadFile([toCSVRow(header), ...rows].join('\n'), `ipam-hosts-${new Date().toISOString().slice(0,10)}.csv`, 'text/csv;charset=utf-8;');
-      showToast('Data IP Host berhasil diekspor ke CSV.');
+      const content = '\uFEFF' + lines.join('\r\n') + '\r\n';
+      downloadFile(content, `${filenamePrefix}-${exportStamp().file}.csv`, 'text/csv;charset=utf-8;');
+      return records.length;
     }
 
-    function exportSubnetsCSV() {
-      const header = ['Network/CIDR', 'Nama Subnet', 'Regional', 'POP', 'VLAN ID', 'Gateway', 'Netmask', 'Broadcast', 'Usable Total', 'Terpakai', 'Utilisasi (%)', 'Catatan'];
-      const rows = db.subnets.map(s => {
-        const { calc, usedCount, totalUsable, pct } = getSubnetStats(s);
-        const reg = getRegionalById(s.regionalId);
-        const pop = getPopById(s.popId);
-        const vlan = getVlanById(s.vlanRefId);
-        return toCSVRow([s.cidr, s.name, reg ? reg.name : '-', pop ? pop.name : '-', vlan ? vlan.vlanId : '-', s.gateway, calc ? calc.netmask : '-', calc ? calc.broadcast : '-', totalUsable, usedCount, pct, s.notes]);
+    function exportPopsCSV(silent = false) {
+      const n = exportCSV('pop', 'netcore-ipam-regional-pop');
+      if (!silent) showToast(`Regional & POP (${n} baris) berhasil diekspor ke CSV.`);
+    }
+
+    function exportSubnetsCSV(silent = false) {
+      const n = exportCSV('subnet', 'netcore-ipam-subnet');
+      if (!silent) showToast(`Subnet & utilisasi (${n} baris) berhasil diekspor ke CSV.`);
+    }
+
+    function exportVlansCSV(silent = false) {
+      const n = exportCSV('vlan', 'netcore-ipam-vlan');
+      if (!silent) showToast(`Data VLAN (${n} baris) berhasil diekspor ke CSV.`);
+    }
+
+    function exportHostsCSV(silent = false) {
+      const n = exportCSV('host', 'netcore-ipam-ip-host');
+      if (!silent) showToast(`Alokasi IP Host (${n} baris) berhasil diekspor ke CSV.`);
+    }
+
+    /* ----------------------------- EXCEL ------------------------------ */
+    function buildDataSheet(kind) {
+      const cols = EXPORT_COLUMNS[kind];
+      const records = buildExportRecords()[kind];
+      const aoa = [cols.map(c => c.label)];
+      records.forEach(rec => {
+        aoa.push(cols.map(c => {
+          const v = rec[c.key];
+          if (c.type === 'pct') return { t: 'n', v: (Number(v) || 0) / 100, z: '0%' };
+          if (c.type === 'num') {
+            return Number.isFinite(Number(v)) && v !== '' && v !== null && v !== undefined
+              ? { t: 'n', v: Number(v), z: '#,##0' }
+              : '';
+          }
+          return v === null || v === undefined ? '' : String(v);
+        }));
       });
-      downloadFile([toCSVRow(header), ...rows].join('\n'), `ipam-subnets-${new Date().toISOString().slice(0,10)}.csv`, 'text/csv;charset=utf-8;');
-      showToast('Data Subnet berhasil diekspor ke CSV.');
-    }
-
-    function exportVlansCSV() {
-      const header = ['VLAN ID', 'Nama VLAN', 'Kategori', 'Regional', 'POP', 'Gateway/SVI', 'Status', 'Perangkat Utama', 'Trunk Ports', 'Access Ports', 'Catatan'];
-      const rows = db.vlans.map(v => {
-        const reg = getRegionalById(v.regionalId);
-        const pop = getPopById(v.popId);
-        return toCSVRow([v.vlanId, v.name, v.category, reg ? reg.name : '-', pop ? pop.name : '-', v.gatewaySvi, v.status, v.coreDevice, v.trunkPorts, v.accessPorts, v.notes]);
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = cols.map(c => {
+        let max = c.label.length;
+        records.forEach(rec => {
+          const v = rec[c.key];
+          const s = c.type === 'pct' ? `${v}%` : (v === null || v === undefined ? '' : String(v));
+          if (s.length > max) max = s.length;
+        });
+        return { wch: Math.max(10, Math.min(max + 2, 48)) };
       });
-      downloadFile([toCSVRow(header), ...rows].join('\n'), `ipam-vlans-${new Date().toISOString().slice(0,10)}.csv`, 'text/csv;charset=utf-8;');
-      showToast('Data VLAN berhasil diekspor ke CSV.');
+      if (records.length > 0) {
+        ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: records.length, c: cols.length - 1 } }) };
+      }
+      return ws;
     }
 
+    function buildSummarySheet() {
+      const stamp = exportStamp();
+      const sum = getFleetSummary();
+      const regional = buildExportRecords().regional;
+      const n = v => ({ t: 'n', v: Number(v) || 0, z: '#,##0' });
+      const p = v => ({ t: 'n', v: (Number(v) || 0) / 100, z: '0%' });
+      const aoa = [
+        ['LAPORAN INFRASTRUKTUR JARINGAN — IPAM & VLAN'],
+        [`${EXPORT_APP.name} · ${EXPORT_APP.org}`],
+        ['Dibuat', stamp.display],
+        ['Sumber Data', 'Database lokal browser (localStorage)'],
+        ['Format', 'Workbook Excel — 6 sheet'],
+        [],
+        ['RINGKASAN DATASET', 'Jumlah'],
+        ['Total Regional', n(sum.regionals)],
+        ['Total POP', n(sum.pops)],
+        ['Total Subnet', n(sum.subnets)],
+        ['Total VLAN', n(sum.vlans)],
+        ['Entri IP Host', n(sum.hosts)],
+        ['Kapasitas IP Usable', n(sum.usable)],
+        ['IP Terpakai', n(sum.used)],
+        ['IP Tersedia', n(sum.free)],
+        ['Utilisasi Keseluruhan', p(sum.pct)],
+        [],
+        ['RINGKASAN PER REGIONAL'],
+        ['Kode', 'Regional', 'Jumlah POP', 'Jumlah Subnet', 'Jumlah VLAN', 'Entri Host', 'Kapasitas IP', 'IP Terpakai', 'IP Tersedia', 'Utilisasi']
+      ];
+      regional.forEach(r => aoa.push([
+        r.code, r.name, n(r.pops), n(r.subnets), n(r.vlans), n(r.hosts), n(r.usable), n(r.used), n(r.free), p(r.pct)
+      ]));
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 22 }, { wch: 28 }, { wch: 13 }, { wch: 14 }, { wch: 13 }, { wch: 12 }, { wch: 14 }, { wch: 13 }, { wch: 13 }, { wch: 12 }];
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } }
+      ];
+      return ws;
+    }
+
+    function exportAllCSVFallback() {
+      exportCSV('pop', 'netcore-ipam-regional-pop');
+      setTimeout(() => exportCSV('subnet', 'netcore-ipam-subnet'), 300);
+      setTimeout(() => exportCSV('vlan', 'netcore-ipam-vlan'), 600);
+      setTimeout(() => exportCSV('host', 'netcore-ipam-ip-host'), 900);
+      showToast('Modul Excel tidak tersedia — 4 file CSV telah diunduh sebagai gantinya.', 'info');
+    }
+
+    function exportAllXLSX() {
+      if (typeof XLSX === 'undefined') {
+        exportAllCSVFallback();
+        return;
+      }
+      try {
+        const wb = XLSX.utils.book_new();
+        wb.Props = {
+          Title: 'Laporan Infrastruktur IPAM & VLAN',
+          Subject: 'Laporan Regional, POP, Subnet, VLAN, dan Alokasi IP Host',
+          Author: EXPORT_APP.name,
+          Company: EXPORT_APP.org,
+          CreatedDate: new Date()
+        };
+        XLSX.utils.book_append_sheet(wb, buildSummarySheet(), 'Ringkasan');
+        XLSX.utils.book_append_sheet(wb, buildDataSheet('regional'), 'Regional');
+        XLSX.utils.book_append_sheet(wb, buildDataSheet('pop'), 'POP');
+        XLSX.utils.book_append_sheet(wb, buildDataSheet('subnet'), 'Subnet');
+        XLSX.utils.book_append_sheet(wb, buildDataSheet('vlan'), 'VLAN');
+        XLSX.utils.book_append_sheet(wb, buildDataSheet('host'), 'IP Host');
+        const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array', compression: true });
+        downloadFile(out, `NetCore-IPAM-Laporan-${exportStamp().file}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        showToast('Laporan Excel 6 sheet berhasil diunduh.');
+      } catch (err) {
+        console.error('Gagal membuat Excel:', err);
+        showToast('Gagal membuat file Excel: ' + err.message, 'error');
+      }
+    }
+
+    /* -------------------- LAPORAN CETAK / SIMPAN PDF ------------------- */
+    function utilColorHex(pct) { return pct >= 90 ? '#dc2626' : pct >= 70 ? '#d97706' : '#059669'; }
+    function utilSoftHex(pct) { return pct >= 90 ? '#fee2e2' : pct >= 70 ? '#fef3c7' : '#d1fae5'; }
+
+    function buildReportHTML() {
+      const rec = buildExportRecords();
+      const sum = getFleetSummary();
+      const stamp = exportStamp();
+      const docNo = `IPAM-${stamp.file.replace('_', '-')}`;
+
+      const utilCell = pct => `<td class="num"><span class="bar"><i style="width:${Math.min(100, Math.max(0, pct))}%;background:${utilColorHex(pct)}"></i></span>${pct}%</td>`;
+      const healthCell = r => `<td><span class="pill" style="color:${utilColorHex(r.pct)};background:${utilSoftHex(r.pct)}">${esc(r.health)}</span></td>`;
+
+      const regionalCols = [
+        { key: 'code', label: 'Kode' },
+        { key: 'name', label: 'Regional' },
+        { key: 'pops', label: 'POP', num: true },
+        { key: 'subnets', label: 'Subnet', num: true },
+        { key: 'vlans', label: 'VLAN', num: true },
+        { key: 'hosts', label: 'Entri Host', num: true },
+        { key: 'usable', label: 'Kapasitas IP', num: true },
+        { key: 'used', label: 'IP Terpakai', num: true },
+        { key: 'free', label: 'IP Tersedia', num: true },
+        { key: 'pct', label: 'Utilisasi', render: r => utilCell(r.pct) }
+      ];
+      const popCols = [
+        { key: 'code', label: 'Kode POP', mono: true },
+        { key: 'name', label: 'Nama POP' },
+        { key: 'regionName', label: 'Regional' },
+        { key: 'type', label: 'Tipe' },
+        { key: 'status', label: 'Status' },
+        { key: 'area', label: 'Area' },
+        { key: 'subnets', label: 'Subnet', num: true },
+        { key: 'vlans', label: 'VLAN', num: true },
+        { key: 'hosts', label: 'Entri Host', num: true },
+        { key: 'pct', label: 'Utilisasi', render: r => utilCell(r.pct) },
+        { key: 'address', label: 'Alamat' }
+      ];
+      const subnetCols = [
+        { key: 'cidr', label: 'Network / CIDR', mono: true },
+        { key: 'name', label: 'Nama Subnet' },
+        { key: 'regionName', label: 'Regional' },
+        { key: 'popName', label: 'POP' },
+        { key: 'vlanId', label: 'VLAN', num: true },
+        { key: 'gateway', label: 'Gateway', mono: true },
+        { key: 'usable', label: 'Kapasitas', num: true },
+        { key: 'used', label: 'Terpakai', num: true },
+        { key: 'free', label: 'Tersedia', num: true },
+        { key: 'pct', label: 'Utilisasi', render: r => utilCell(r.pct) },
+        { key: 'health', label: 'Status', render: r => healthCell(r) }
+      ];
+      const vlanCols = [
+        { key: 'vlanId', label: 'VLAN', num: true },
+        { key: 'name', label: 'Nama VLAN', mono: true },
+        { key: 'category', label: 'Kategori' },
+        { key: 'regionName', label: 'Regional' },
+        { key: 'popName', label: 'POP' },
+        { key: 'gatewaySvi', label: 'Gateway / SVI', mono: true },
+        { key: 'status', label: 'Status' },
+        { key: 'coreDevice', label: 'Perangkat Utama' },
+        { key: 'trunkPorts', label: 'Trunk Port' },
+        { key: 'accessPorts', label: 'Access Port' }
+      ];
+      const hostCols = [
+        { key: 'ip', label: 'IP Address', mono: true },
+        { key: 'hostname', label: 'Hostname' },
+        { key: 'status', label: 'Status' },
+        { key: 'vendor', label: 'Perangkat' },
+        { key: 'mac', label: 'MAC Address', mono: true },
+        { key: 'iface', label: 'Interface', mono: true },
+        { key: 'cidr', label: 'Subnet', mono: true },
+        { key: 'vlanId', label: 'VLAN', num: true },
+        { key: 'regionName', label: 'Regional' },
+        { key: 'popName', label: 'POP' },
+        { key: 'pic', label: 'PIC' }
+      ];
+
+      const printTable = (title, cols, rows) => `
+        <section>
+          <h2>${esc(title)}</h2>
+          <table>
+            <thead><tr>${cols.map(c => `<th${c.num ? ' class="num"' : ''}>${esc(c.label)}</th>`).join('')}</tr></thead>
+            <tbody>${rows.map(r => `<tr>${cols.map(c => {
+              if (c.render) return c.render(r);
+              const v = r[c.key];
+              const empty = v === null || v === undefined || v === '';
+              if (c.num) return `<td class="num">${empty ? '&ndash;' : fmtNum(v)}</td>`;
+              return `<td${c.mono ? ' class="mono"' : ''}>${empty ? '&ndash;' : esc(v)}</td>`;
+            }).join('')}</tr>`).join('')}</tbody>
+          </table>
+        </section>`;
+
+      const kpis = [
+        ['Regional', sum.regionals],
+        ['POP', sum.pops],
+        ['Subnet', sum.subnets],
+        ['VLAN', sum.vlans],
+        ['IP Terpakai', sum.used],
+        ['Utilisasi', `${sum.pct}%`]
+      ].map(([label, val]) => `<div class="kpi"><span>${label}</span><b>${typeof val === 'number' ? fmtNum(val) : esc(val)}</b></div>`).join('');
+
+      return `<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<title>Laporan IPAM &amp; VLAN — ${esc(stamp.date)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;600&amp;display=swap" rel="stylesheet" />
+<style>
+  @page { size: A4 landscape; margin: 9mm 9mm 14mm; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-size: 10px; color: #0f172a; background: #e2e8f0; -webkit-font-smoothing: antialiased; }
+  .page { width: min(297mm, 100%); margin: 14px auto 24px; padding: 9mm 8mm 8mm; background: #fff; box-shadow: 0 10px 40px rgba(15, 23, 42, .18); }
+  .report-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 9px; border-bottom: 2.5px solid #0e7490; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .logo { width: 36px; height: 36px; border-radius: 9px; background: linear-gradient(135deg, #06b6d4, #2563eb); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; }
+  h1 { font-size: 15.5px; line-height: 1.2; margin: 0; letter-spacing: -.01em; }
+  .brand p { margin: 3px 0 0; font-size: 9.5px; color: #64748b; }
+  .meta { text-align: right; font-size: 8.6px; color: #475569; line-height: 1.7; }
+  .meta b { color: #0f172a; font-weight: 600; }
+  .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 7px; margin: 11px 0 14px; }
+  .kpi { border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 9px; background: #f8fafc; }
+  .kpi span { display: block; font-size: 8px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; font-weight: 600; }
+  .kpi b { display: block; margin-top: 2px; font-size: 14px; color: #0e7490; font-variant-numeric: tabular-nums; }
+  section { margin-bottom: 13px; }
+  section h2 { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: #0e7490; margin: 0 0 5px; padding-left: 7px; border-left: 3px solid #06b6d4; break-after: avoid; page-break-after: avoid; break-inside: avoid; }
+  table { width: 100%; border-collapse: collapse; font-size: 9px; }
+  thead { display: table-header-group; }
+  th { background: #f1f5f9; color: #334155; font-weight: 600; text-align: left; padding: 4.5px 6px; border-bottom: 1.5px solid #cbd5e1; white-space: nowrap; }
+  td { padding: 4.5px 6px; border-bottom: 1px solid #e9eef5; vertical-align: top; }
+  tbody tr:nth-child(even) td { background: #f8fafc; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mono { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 8.2px; }
+  .pill { display: inline-block; padding: 1px 6px; border-radius: 999px; font-size: 7.8px; font-weight: 600; white-space: nowrap; }
+  .bar { display: inline-block; width: 40px; height: 4px; border-radius: 2px; background: #e2e8f0; overflow: hidden; vertical-align: middle; margin-right: 4px; }
+  .bar i { display: block; height: 100%; }
+  footer.report-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; padding-top: 5px; border-top: 1px solid #e2e8f0; font-size: 7.6px; color: #94a3b8; }
+  .toolbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: #0f172a; color: #cbd5e1; font-size: 12px; }
+  .toolbar span { margin-right: auto; color: #94a3b8; }
+  .toolbar button { font: inherit; font-weight: 600; padding: 7px 14px; border-radius: 8px; border: 1px solid #06b6d4; background: #06b6d4; color: #062b33; cursor: pointer; }
+  .toolbar button.ghost { background: transparent; color: #cbd5e1; border-color: #334155; }
+  @media print {
+    body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .toolbar { display: none !important; }
+    .page { width: auto; margin: 0; padding: 0 0 6mm; box-shadow: none; }
+    footer.report-foot { margin-top: 10px; background: #fff; break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <span>Pratinjau laporan — gunakan tombol cetak lalu pilih "Save as PDF" untuk menyimpan.</span>
+    <button onclick="window.print()">Cetak / Simpan PDF</button>
+    <button class="ghost" onclick="window.close()">Tutup</button>
+  </div>
+  <div class="page">
+    <header class="report-head">
+      <div class="brand">
+        <div class="logo">N</div>
+        <div>
+          <h1>Laporan Infrastruktur IPAM &amp; VLAN</h1>
+          <p>Ringkasan Regional, POP, Subnet, VLAN, dan Alokasi IP Host</p>
+        </div>
+      </div>
+      <div class="meta">
+        <div><b>No. Dokumen:</b> ${esc(docNo)}</div>
+        <div><b>Dibuat:</b> ${esc(stamp.display)}</div>
+        <div><b>Sumber Data:</b> localStorage browser</div>
+        <div><b>Aplikasi:</b> ${esc(EXPORT_APP.name)} v${esc(EXPORT_APP.version)}</div>
+      </div>
+    </header>
+    <div class="kpis">${kpis}</div>
+    ${printTable('1. Ringkasan per Regional', regionalCols, rec.regional)}
+    ${printTable('2. Daftar Regional & POP', popCols, rec.pop)}
+    ${printTable('3. Subnet & Utilisasi Alamat IP', subnetCols, rec.subnet)}
+    ${printTable('4. Manajemen VLAN', vlanCols, rec.vlan)}
+    ${printTable('5. Alokasi IP Host', hostCols, rec.host)}
+    <footer class="report-foot">
+      <span>${esc(EXPORT_APP.name)} · ${esc(EXPORT_APP.org)}</span>
+      <span>${esc(sum.regionals)} regional · ${esc(sum.pops)} POP · ${esc(sum.subnets)} subnet · ${esc(sum.vlans)} VLAN · ${esc(db.hosts.length)} entri host</span>
+      <span>${esc(docNo)}</span>
+    </footer>
+  </div>
+</body>
+</html>`;
+    }
+
+    function exportPrintableReport() {
+      const win = window.open('', '_blank');
+      if (!win) {
+        showToast('Pop-up diblokir. Izinkan pop-up untuk membuka laporan cetak.', 'error');
+        return;
+      }
+      win.document.open();
+      win.document.write(buildReportHTML());
+      win.document.close();
+      win.focus();
+      setTimeout(() => { try { win.print(); } catch (err) { console.error(err); } }, 600);
+      showToast('Laporan siap dicetak. Pilih "Save as PDF" pada dialog cetak.', 'info');
+    }
+
+    /* ------------------------------ JSON ------------------------------- */
     function downloadJSONBackup() {
-      downloadFile(JSON.stringify(db, null, 2), `netcore-ipam-backup-${new Date().toISOString().slice(0,10)}.json`, 'application/json');
-      showToast('Backup database JSON berhasil diunduh.');
+      const stamp = exportStamp();
+      const payload = {
+        _meta: {
+          app: EXPORT_APP.name,
+          org: EXPORT_APP.org,
+          version: EXPORT_APP.version,
+          schema: EXPORT_APP.schema,
+          exportedAt: new Date().toISOString(),
+          exportedAtLocal: stamp.display,
+          counts: {
+            regionals: db.regionals.length,
+            pops: db.pops.length,
+            subnets: db.subnets.length,
+            vlans: db.vlans.length,
+            hosts: db.hosts.length
+          }
+        },
+        regionals: db.regionals,
+        pops: db.pops,
+        subnets: db.subnets,
+        vlans: db.vlans,
+        hosts: db.hosts,
+        logs: db.logs
+      };
+      downloadFile(JSON.stringify(payload, null, 2), `netcore-ipam-backup-${stamp.file}.json`, 'application/json');
+      showToast('Backup JSON (dengan metadata) berhasil diunduh.');
     }
 
     function triggerRestoreJSON() { document.getElementById('json-restore-input').click(); }
@@ -2939,11 +3546,18 @@
       reader.onload = (e) => {
         try {
           const parsed = JSON.parse(e.target.result);
-          if (!Array.isArray(parsed.regionals) || !Array.isArray(parsed.pops) || !Array.isArray(parsed.subnets) || !Array.isArray(parsed.vlans) || !Array.isArray(parsed.hosts)) {
+          if (!parsed || !Array.isArray(parsed.regionals) || !Array.isArray(parsed.pops) || !Array.isArray(parsed.subnets) || !Array.isArray(parsed.vlans) || !Array.isArray(parsed.hosts)) {
             throw new Error('Format JSON tidak memiliki struktur Regional/POP/Subnet/VLAN/Host yang valid.');
           }
-          db = { ...parsed, logs: Array.isArray(parsed.logs) ? parsed.logs : [] };
-          addLog('Restore Data', `Database dipulihkan dari ${file.name}`, 'emerald');
+          db = {
+            regionals: parsed.regionals,
+            pops: parsed.pops,
+            subnets: parsed.subnets,
+            vlans: parsed.vlans,
+            hosts: parsed.hosts,
+            logs: Array.isArray(parsed.logs) ? parsed.logs : []
+          };
+          addLog('Restore Data', `Database dipulihkan dari ${file.name} (${db.regionals.length} regional, ${db.pops.length} POP, ${db.subnets.length} subnet, ${db.vlans.length} VLAN, ${db.hosts.length} IP host)`, 'emerald');
           saveData();
           uiState.selectedSubnetId = null;
           renderCurrentView();
