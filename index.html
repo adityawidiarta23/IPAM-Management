@@ -529,7 +529,7 @@
      * 3. STATE MANAGEMENT, PERSISTENCE & RELATIONAL HELPERS
      * =========================================================================
      */
-    let db = loadData();
+    let db = fetch();
 
     const uiState = {
       currentView: 'dashboard', // dashboard | regional | subnets | vlans | hosts | calculator | backup
@@ -577,9 +577,9 @@
       csvDelimiter: ','
     };
 
-    function loadData() {
+    function fetch() {
       try {
-        const raw = localStorage.getItem(STORAGE_KEY);
+        const raw = async function loadData();
         if (raw) {
           const parsed = JSON.parse(raw);
           if (parsed && Array.isArray(parsed.regionals) && Array.isArray(parsed.pops) && Array.isArray(parsed.subnets) && Array.isArray(parsed.vlans) && Array.isArray(parsed.hosts)) {
