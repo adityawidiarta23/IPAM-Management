@@ -122,6 +122,16 @@
             <span class="font-mono text-emerald-400 text-[11px]">Aktif</span>
           </div>
           <p class="text-[11px] text-slate-500 leading-relaxed">Regional, POP, Subnet, VLAN & IP Host tersimpan otomatis.</p>
+          <button type="button" onclick="openDriveSetupModal()" class="mt-2.5 pt-2.5 border-t border-slate-800 flex items-center justify-between w-full text-[11px] group" title="Kelola koneksi Google Drive">
+            <span class="text-slate-400 flex items-center gap-1.5">
+              <span id="drive-dot" class="w-2 h-2 rounded-full bg-slate-600"></span>
+              Google Drive
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span id="drive-status-text" class="font-mono text-[10px] text-slate-500">Belum terhubung</span>
+              <i data-lucide="settings-2" class="w-3 h-3 text-slate-600 group-hover:text-slate-300 transition-colors"></i>
+            </span>
+          </button>
         </div>
       </div>
     </aside>
@@ -529,7 +539,27 @@
      * 3. STATE MANAGEMENT, PERSISTENCE & RELATIONAL HELPERS
      * =========================================================================
      */
-    let db = fetch();
+    const DRIVE_CONFIG_KEY = 'netcore-ipam-drive-config';
+    const DRIVE_UPDATED_KEY = 'netcore-ipam-updated';
+
+    function loadDriveConfig() {
+      try {
+        const raw = localStorage.getItem(DRIVE_CONFIG_KEY);
+        if (!raw) return null;
+        const cfg = JSON.parse(raw);
+        return cfg && cfg.url && cfg.token ? cfg : null;
+      } catch (err) {
+        return null;
+      }
+    }
+
+    let driveConfig = loadDriveConfig();
+    let driveState = { busy: false, status: driveConfig ? 'connected' : 'off', error: '' };
+    let driveReady = false;
+    let drivePushTimer = null;
+    let driveSuppressPush = false;
+
+    let db = loadData();
 
     const uiState = {
       currentView: 'dashboard', // dashboard | regional | subnets | vlans | hosts | calculator | backup
@@ -577,9 +607,9 @@
       csvDelimiter: ','
     };
 
-    function fetch() {
+    function loadData() {
       try {
-        const raw = async function loadData();
+        const raw = localStorage.getItem(STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
           if (parsed && Array.isArray(parsed.regionals) && Array.isArray(parsed.pops) && Array.isArray(parsed.subnets) && Array.isArray(parsed.vlans) && Array.isArray(parsed.hosts)) {
@@ -598,6 +628,8 @@
     function saveData(dataObj = db) {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(dataObj));
+        localStorage.setItem(DRIVE_UPDATED_KEY, new Date().toISOString());
+        if (driveReady && !driveSuppressPush) scheduleDrivePush();
       } catch (err) {
         console.error('Gagal menyimpan localStorage:', err);
         showToast('Gagal menyimpan data ke penyimpanan lokal browser.', 'error');
@@ -607,7 +639,7 @@
     function addLog(action, detail, type = 'cyan') {
       db.logs.unshift({ id: uid('log'), time: formatTimeNow(), action, detail, type });
       if (db.logs.length > 30) db.logs.length = 30;
-      ;
+      saveData();
     }
 
     function getRegionalById(id) { return db.regionals.find(r => r.id === id) || null; }
@@ -2134,6 +2166,20 @@
             </div>
           </div>
 
+          <!-- Google Drive Sync -->
+          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-3">
+            <div class="flex items-start gap-3">
+              <div class="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center shrink-0">
+                <i data-lucide="cloud" class="w-4 h-4 text-cyan-400"></i>
+              </div>
+              <div class="min-w-0">
+                <h3 class="text-base font-semibold text-white">Sinkronisasi Google Drive</h3>
+                <p class="text-xs text-slate-400 leading-relaxed mt-0.5">Database disimpan sebagai file JSON di folder <span class="font-mono text-slate-300">NetCore IPAM</span> pada Google Drive Anda melalui Apps Script Web App pribadi.</p>
+              </div>
+            </div>
+            <div id="drive-card-body">${renderDriveCardBody()}</div>
+          </div>
+
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <!-- Laporan profesional -->
             <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-3">
@@ -2237,7 +2283,7 @@
       }
       db.regionals.push({ id: uid('reg'), code, name, areas, description });
       addLog('Tambah Regional', `${name} (${areas}) ditambahkan`, 'cyan');
-      ;
+      saveData();
       closeModal();
       showToast(`${name} berhasil ditambahkan.`);
       renderCurrentView();
@@ -2352,7 +2398,7 @@
         showToast(`POP ${payload.name} (${payload.code}) berhasil ditambahkan.`);
       }
 
-      ;
+      saveData();
       if (isQuick) {
         closeSubModal();
         if (typeof quickPopCallback === 'function') quickPopCallback(payload);
@@ -2376,7 +2422,7 @@
         () => {
           db.pops = db.pops.filter(p => p.id !== popId);
           addLog('Hapus POP', `${pop.name} (${pop.code}) dihapus`, 'rose');
-          ;
+          saveData();
           showToast(`POP ${pop.name} berhasil dihapus.`, 'warning');
           renderCurrentView();
         },
@@ -2553,7 +2599,7 @@
         showToast(`Subnet ${payload.cidr} berhasil ditambahkan.`);
       }
 
-      ;
+      saveData();
       closeModal();
       renderCurrentView();
     }
@@ -2570,7 +2616,7 @@
           db.hosts = db.hosts.filter(h => h.subnetId !== subnetId);
           if (uiState.selectedSubnetId === subnetId) uiState.selectedSubnetId = null;
           addLog('Hapus Subnet', `Subnet ${sub.cidr} dihapus`, 'rose');
-          ;
+          saveData();
           showToast(`Subnet ${sub.cidr} berhasil dihapus.`, 'warning');
           renderCurrentView();
         },
@@ -2678,7 +2724,7 @@
         if (existingId) {
           db.hosts = db.hosts.filter(h => h.id !== existingId);
           addLog('Lepas IP', `${ip} dikembalikan ke status Available`, 'amber');
-          ;
+          saveData();
           showToast(`IP ${ip} dilepas.`);
         }
         closeModal(); renderCurrentView(); return;
@@ -2705,7 +2751,7 @@
         addLog('Assign IP', `${ip} → ${payload.hostname || '-'} (${payload.vendor})`, 'emerald');
         showToast(`IP ${ip} berhasil dialokasikan.`);
       }
-      ; closeModal(); renderCurrentView();
+      saveData(); closeModal(); renderCurrentView();
     }
 
     function deleteHost(hostId) {
@@ -2714,7 +2760,7 @@
       showConfirmModal('Lepas Alokasi IP?', `Lepas IP ${host.ip} (${host.hostname || '-'}) agar kembali Available?`, () => {
         db.hosts = db.hosts.filter(h => h.id !== hostId);
         addLog('Lepas IP', `${host.ip} dilepas`, 'amber');
-        ; showToast(`IP ${host.ip} dilepas.`); renderCurrentView();
+        saveData(); showToast(`IP ${host.ip} dilepas.`); renderCurrentView();
       }, 'Ya, Lepas IP');
     }
 
@@ -2835,7 +2881,7 @@
         addLog('Tambah VLAN', `VLAN ${payload.vlanId} (${payload.name}) di ${pop ? pop.name : '-'}`, 'violet');
         showToast(`VLAN ${payload.vlanId} berhasil ditambahkan.`);
       }
-      fetch(); closeModal(); renderCurrentView();
+      saveData(); closeModal(); renderCurrentView();
     }
 
     function deleteVlan(vlanRefId) {
@@ -2845,7 +2891,7 @@
         db.vlans = db.vlans.filter(x => x.id !== vlanRefId);
         db.subnets.forEach(s => { if (s.vlanRefId === vlanRefId) s.vlanRefId = ''; });
         addLog('Hapus VLAN', `VLAN ${v.vlanId} dihapus`, 'rose');
-        fetch(); showToast(`VLAN ${v.vlanId} dihapus.`, 'warning'); renderCurrentView();
+        saveData(); showToast(`VLAN ${v.vlanId} dihapus.`, 'warning'); renderCurrentView();
       }, 'Ya, Hapus VLAN');
     }
 
@@ -3558,7 +3604,7 @@
             logs: Array.isArray(parsed.logs) ? parsed.logs : []
           };
           addLog('Restore Data', `Database dipulihkan dari ${file.name} (${db.regionals.length} regional, ${db.pops.length} POP, ${db.subnets.length} subnet, ${db.vlans.length} VLAN, ${db.hosts.length} IP host)`, 'emerald');
-          fetch();
+          saveData();
           uiState.selectedSubnetId = null;
           renderCurrentView();
           showToast('Database berhasil dipulihkan dari JSON.');
@@ -3576,7 +3622,7 @@
         'Seluruh perubahan lokal akan diganti dengan data demo 4 Regional (Jakarta, Bekasi, Pekalongan, Bandung, Lombok, NTT). Lanjutkan?',
         () => {
           db = getDefaultData();
-          fetch();
+          saveData();
           uiState.selectedSubnetId = null;
           uiState.dashFilterReg = 'ALL'; uiState.dashFilterPop = 'ALL';
           navigate('dashboard');
@@ -3586,7 +3632,705 @@
       );
     }
 
-    window.addEventListener('DOMContentLoaded', () => { navigate('dashboard'); });
+    /**
+     * =========================================================================
+     * 14. GOOGLE DRIVE SYNC (APPS SCRIPT WEB APP BRIDGE)
+     * =========================================================================
+     * Transport:
+     *   GET  (JSONP)   : ping / meta / pull  (ContentService MimeType.JAVASCRIPT)
+     *   POST (no-cors) : push                (doPost, body text/plain JSON)
+     * Apps Script menulis folder "NetCore IPAM" / file "netcore-ipam-db.json".
+     */
+    const DRIVE_TOKEN_DRAFT_KEY = 'netcore-ipam-drive-token-draft';
+    const DRIVE_FILE_NAME = 'netcore-ipam-db.json';
+    const DRIVE_FOLDER_NAME = 'NetCore IPAM';
+    let pendingDriveRemote = null;
+
+    const DRIVE_STATUS_META = {
+      off: { label: 'Belum terhubung', dot: 'bg-slate-600', text: 'text-slate-500' },
+      connected: { label: 'Terhubung', dot: 'bg-emerald-400', text: 'text-emerald-400' },
+      syncing: { label: 'Sinkron...', dot: 'bg-cyan-400 animate-pulse', text: 'text-cyan-300' },
+      error: { label: 'Gagal sinkron', dot: 'bg-rose-500', text: 'text-rose-300' }
+    };
+
+    function generateDriveToken() {
+      const bytes = new Uint8Array(18);
+      if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(bytes);
+      else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+      return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function setDriveTokenDraft(token) {
+      try { localStorage.setItem(DRIVE_TOKEN_DRAFT_KEY, token); } catch (err) { /* abaikan */ }
+    }
+
+    function getDriveTokenDraft() {
+      if (driveConfig && driveConfig.token) return driveConfig.token;
+      let token = '';
+      try { token = localStorage.getItem(DRIVE_TOKEN_DRAFT_KEY) || ''; } catch (err) { token = ''; }
+      if (!/^[a-f0-9]{16,64}$/i.test(token)) {
+        token = generateDriveToken();
+        setDriveTokenDraft(token);
+      }
+      return token;
+    }
+
+    function buildDriveScript(token) {
+      const safeToken = String(token || '').replace(/[^a-f0-9]/gi, '');
+      return [
+        '/**',
+        ' * NetCore IPAM - Google Drive Bridge (Apps Script Web App)',
+        ' *',
+        ' * Cara pakai:',
+        ' * 1. Buka https://script.google.com lalu buat project baru.',
+        ' * 2. Hapus isi Code.gs, tempel seluruh kode ini.',
+        ' * 3. Deploy > New deployment > pilih "Web app".',
+        ' *    - Execute as: Me',
+        ' *    - Who has access: Anyone',
+        ' * 4. Salin URL yang berakhiran /exec ke aplikasi NetCore IPAM.',
+        ' *',
+        ' * File database disimpan di folder "NetCore IPAM"',
+        ' * dengan nama "netcore-ipam-db.json" milik akun Anda.',
+        ' */',
+        "var BRIDGE_TOKEN = '" + safeToken + "';",
+        "var FOLDER_NAME = 'NetCore IPAM';",
+        "var FILE_NAME = 'netcore-ipam-db.json';",
+        '',
+        'function doGet(e) {',
+        '  var params = (e && e.parameter) || {};',
+        "  var callback = String(params.callback || '');",
+        '  var result = handleRequest_(params, null);',
+        '  if (callback) {',
+        '    if (!/^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/.test(callback)) {',
+        "      return ContentService.createTextOutput('/* invalid callback */')",
+        '        .setMimeType(ContentService.MimeType.JAVASCRIPT);',
+        '    }',
+        "    return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ');')",
+        '      .setMimeType(ContentService.MimeType.JAVASCRIPT);',
+        '  }',
+        '  return ContentService.createTextOutput(JSON.stringify(result))',
+        '    .setMimeType(ContentService.MimeType.JSON);',
+        '}',
+        '',
+        'function doPost(e) {',
+        '  var body = {};',
+        "  try { body = JSON.parse((e && e.postData && e.postData.contents) || '{}'); } catch (err) { body = {}; }",
+        '  return ContentService.createTextOutput(JSON.stringify(handleRequest_(body, body)))',
+        '    .setMimeType(ContentService.MimeType.JSON);',
+        '}',
+        '',
+        'function handleRequest_(params, body) {',
+        "  if (String(params.token || '') !== BRIDGE_TOKEN) {",
+        "    return { ok: false, error: 'Token tidak valid' };",
+        '  }',
+        "  var action = String(params.action || 'ping');",
+        '  try {',
+        "    if (action === 'ping' || action === 'meta') return readMeta_();",
+        "    if (action === 'pull') return readData_();",
+        "    if (action === 'push') return writeData_((body && body.data) || null, (body && body.clientId) || '');",
+        "    return { ok: false, error: 'Aksi tidak dikenal: ' + action };",
+        '  } catch (err) {',
+        '    return { ok: false, error: String((err && err.message) || err) };',
+        '  }',
+        '}',
+        '',
+        'function countRows_(data) {',
+        '  if (!data || typeof data !== "object") return null;',
+        '  function n(key) { return Array.isArray(data[key]) ? data[key].length : 0; }',
+        "  return { regionals: n('regionals'), pops: n('pops'), subnets: n('subnets'), vlans: n('vlans'), hosts: n('hosts') };",
+        '}',
+        '',
+        'function findFolder_(create) {',
+        '  var it = DriveApp.getFoldersByName(FOLDER_NAME);',
+        '  if (it.hasNext()) return it.next();',
+        '  return create ? DriveApp.createFolder(FOLDER_NAME) : null;',
+        '}',
+        '',
+        'function readMeta_() {',
+        '  var folder = findFolder_(false);',
+        "  if (!folder) return { ok: true, exists: false, savedAt: null, counts: null, lastClientId: '' };",
+        '  var files = folder.getFilesByName(FILE_NAME);',
+        "  if (!files.hasNext()) return { ok: true, exists: false, savedAt: null, counts: null, lastClientId: '' };",
+        '  var file = files.next();',
+        '  var parsed = {};',
+        "  try { parsed = JSON.parse(file.getBlob().getDataAsString('UTF-8') || '{}'); } catch (err) { parsed = {}; }",
+        '  var data = parsed.data || parsed;',
+        '  return {',
+        '    ok: true,',
+        '    exists: true,',
+        '    savedAt: parsed.savedAt || file.getLastUpdated().toISOString(),',
+        '    counts: countRows_(data),',
+        "    lastClientId: parsed.lastClientId || ''",
+        '  };',
+        '}',
+        '',
+        'function readData_() {',
+        '  var folder = findFolder_(false);',
+        "  if (!folder) return { ok: true, exists: false, savedAt: null, data: null };",
+        '  var files = folder.getFilesByName(FILE_NAME);',
+        "  if (!files.hasNext()) return { ok: true, exists: false, savedAt: null, data: null };",
+        '  var file = files.next();',
+        "  var parsed = JSON.parse(file.getBlob().getDataAsString('UTF-8') || '{}');",
+        '  return {',
+        '    ok: true,',
+        '    exists: true,',
+        '    savedAt: parsed.savedAt || file.getLastUpdated().toISOString(),',
+        '    data: parsed.data || parsed',
+        '  };',
+        '}',
+        '',
+        'function writeData_(data, clientId) {',
+        "  if (!data || typeof data !== 'object') return { ok: false, error: 'Payload data kosong' };",
+        '  var folder = findFolder_(true);',
+        '  var savedAt = new Date().toISOString();',
+        '  var json = JSON.stringify({',
+        "    app: 'NetCore IPAM',",
+        '    version: 1,',
+        '    savedAt: savedAt,',
+        "    lastClientId: clientId || '',",
+        '    data: data',
+        '  }, null, 2);',
+        '  var files = folder.getFilesByName(FILE_NAME);',
+        '  if (files.hasNext()) files.next().setContent(json);',
+        '  else folder.createFile(FILE_NAME, json, MimeType.PLAIN_TEXT);',
+        '  return { ok: true, savedAt: savedAt, counts: countRows_(data) };',
+        '}'
+      ].join('\n');
+    }
+
+    function driveJsonp(action, timeout = 15000) {
+      return new Promise((resolve, reject) => {
+        if (!driveConfig) { reject(new Error('Google Drive belum terhubung')); return; }
+        const cbName = '__netcoreDriveCb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+        const sep = driveConfig.url.includes('?') ? '&' : '?';
+        const url = `${driveConfig.url}${sep}token=${encodeURIComponent(driveConfig.token)}&action=${encodeURIComponent(action)}&callback=${cbName}&_=${Date.now()}`;
+        const script = document.createElement('script');
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(new Error('Timeout koneksi ke Google Drive'));
+        }, timeout);
+        function cleanup() {
+          clearTimeout(timer);
+          try { delete window[cbName]; } catch (err) { window[cbName] = undefined; }
+          if (script.parentNode) script.parentNode.removeChild(script);
+        }
+        window[cbName] = (payload) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(payload);
+        };
+        script.onerror = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(new Error('Gagal memuat Apps Script. Periksa URL /exec dan akses "Anyone".'));
+        };
+        script.async = true;
+        script.src = url;
+        document.body.appendChild(script);
+      });
+    }
+
+    function getLocalUpdatedAt() {
+      try { return localStorage.getItem(DRIVE_UPDATED_KEY) || ''; } catch (err) { return ''; }
+    }
+
+    function formatDriveTime(iso) {
+      if (!iso) return 'Belum pernah';
+      const date = new Date(iso);
+      if (isNaN(date.getTime())) return 'Tidak diketahui';
+      const diff = Date.now() - date.getTime();
+      const mins = Math.floor(diff / 60000);
+      let rel = '';
+      if (mins >= 0 && mins < 1) rel = 'baru saja';
+      else if (mins < 60) rel = `${mins} menit lalu`;
+      else if (mins < 1440) rel = `${Math.floor(mins / 60)} jam lalu`;
+      else if (mins < 43200) rel = `${Math.floor(mins / 1440)} hari lalu`;
+      const abs = date.toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      return rel ? `${abs} (${rel})` : abs;
+    }
+
+    function shortDriveUrl(url) {
+      if (!url) return '-';
+      try {
+        const u = new URL(url);
+        const match = u.pathname.match(/\/s\/([^/]+)\/exec/);
+        return `${u.hostname}/…/${match ? match[1].slice(-10) : 'exec'}`;
+      } catch (err) {
+        return url.length > 48 ? `${url.slice(0, 24)}…${url.slice(-18)}` : url;
+      }
+    }
+
+    function countDriveRows(data) {
+      if (!data) return null;
+      return {
+        regionals: (data.regionals || []).length,
+        pops: (data.pops || []).length,
+        subnets: (data.subnets || []).length,
+        vlans: (data.vlans || []).length,
+        hosts: (data.hosts || []).length
+      };
+    }
+
+    function normalizeDriveData(data) {
+      if (!data || typeof data !== 'object') return null;
+      if (!Array.isArray(data.regionals) || !Array.isArray(data.pops) || !Array.isArray(data.subnets) ||
+          !Array.isArray(data.vlans) || !Array.isArray(data.hosts)) return null;
+      return {
+        regionals: data.regionals,
+        pops: data.pops,
+        subnets: data.subnets,
+        vlans: data.vlans,
+        hosts: data.hosts,
+        logs: Array.isArray(data.logs) ? data.logs : []
+      };
+    }
+
+    function setDriveStatus(status, error = '') {
+      driveState.status = status;
+      driveState.error = error;
+      driveState.busy = status === 'syncing';
+      updateDriveStatusUI();
+    }
+
+    function updateDriveStatusUI() {
+      const meta = DRIVE_STATUS_META[driveState.status] || DRIVE_STATUS_META.off;
+      const dot = document.getElementById('drive-dot');
+      if (dot) dot.className = `w-2 h-2 rounded-full ${meta.dot}`;
+      const text = document.getElementById('drive-status-text');
+      if (text) {
+        text.className = `font-mono text-[10px] ${meta.text}`;
+        text.textContent = driveState.status === 'off' ? 'Belum terhubung' : meta.label;
+      }
+      const body = document.getElementById('drive-card-body');
+      if (body) {
+        body.innerHTML = renderDriveCardBody();
+        if (window.lucide && lucide.createIcons) lucide.createIcons();
+      }
+    }
+
+    function renderDriveCardBody() {
+      if (!driveConfig) {
+        return `
+          <div class="rounded-xl bg-slate-950 border border-slate-800 p-4 flex items-start gap-3">
+            <div class="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0"><i data-lucide="plug" class="w-4 h-4 text-slate-400"></i></div>
+            <div class="min-w-0">
+              <p class="text-sm text-slate-200 font-medium">Belum terhubung ke Google Drive</p>
+              <p class="text-xs text-slate-400 mt-0.5 leading-relaxed">Hubungkan sekali lewat Apps Script Web App. Setelah aktif, setiap perubahan otomatis diunggah ke file <span class="font-mono text-slate-300">${DRIVE_FILE_NAME}</span>.</p>
+            </div>
+          </div>
+          <button onclick="openDriveSetupModal()" class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium transition"><i data-lucide="link-2" class="w-4 h-4"></i> Hubungkan Google Drive</button>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+            <span class="flex items-center gap-1.5"><i data-lucide="shield-check" class="w-3 h-3"></i> Tanpa OAuth Client ID</span>
+            <span class="flex items-center gap-1.5"><i data-lucide="refresh-cw" class="w-3 h-3"></i> Sinkron otomatis</span>
+            <span class="flex items-center gap-1.5"><i data-lucide="folder" class="w-3 h-3"></i> ${DRIVE_FOLDER_NAME}</span>
+          </div>
+        `;
+      }
+      const meta = DRIVE_STATUS_META[driveState.status] || DRIVE_STATUS_META.connected;
+      const last = formatDriveTime(getLocalUpdatedAt());
+      const busy = driveState.busy;
+      const err = driveState.error
+        ? `<div class="rounded-xl bg-rose-500/5 border border-rose-500/20 px-3.5 py-2.5 text-[11px] text-rose-200/90 flex items-start gap-2"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span class="min-w-0 break-words">${esc(driveState.error)}</span></div>`
+        : '';
+      return `
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Status</div>
+            <div class="mt-1 flex items-center gap-2 text-xs font-medium ${meta.text}"><span class="w-2 h-2 rounded-full ${meta.dot}"></span>${meta.label}</div>
+          </div>
+          <div class="rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">File Drive</div>
+            <div class="mt-1 text-xs font-mono text-slate-200 truncate" title="${DRIVE_FOLDER_NAME}/${DRIVE_FILE_NAME}">${DRIVE_FILE_NAME}</div>
+          </div>
+          <div class="rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Perubahan Lokal</div>
+            <div class="mt-1 text-xs text-slate-200 truncate" title="${esc(last)}">${esc(last)}</div>
+          </div>
+        </div>
+        ${err}
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <button onclick="drivePush()" ${busy ? 'disabled' : ''} class="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition"><i data-lucide="${busy ? 'loader-2' : 'cloud-upload'}" class="w-4 h-4 ${busy ? 'animate-spin' : ''}"></i> Sinkron Sekarang</button>
+          <button onclick="drivePull(true)" ${busy ? 'disabled' : ''} class="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 border border-slate-700 text-slate-200 text-sm font-medium transition"><i data-lucide="cloud-download" class="w-4 h-4 text-cyan-400"></i> Tarik dari Drive</button>
+        </div>
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-500">
+          <span class="font-mono truncate max-w-[65%]" title="${esc(driveConfig.url)}"><i data-lucide="server" class="w-3 h-3 inline-block mr-1 -mt-0.5"></i>${esc(shortDriveUrl(driveConfig.url))}</span>
+          <span class="flex items-center gap-3">
+            <button onclick="openDriveSetupModal()" class="text-slate-400 hover:text-cyan-300 transition">Pengaturan</button>
+            <button onclick="disconnectDrive()" class="text-slate-400 hover:text-rose-300 transition">Putuskan</button>
+          </span>
+        </div>
+      `;
+    }
+
+    function openDriveSetupModal() {
+      const token = getDriveTokenDraft();
+      const currentUrl = driveConfig ? driveConfig.url : '';
+      openModal(`
+        <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between gap-3">
+          <h3 class="text-base font-semibold text-white flex items-center gap-2"><i data-lucide="cloud" class="w-4 h-4 text-cyan-400"></i> Hubungkan Google Drive</h3>
+          <button onclick="closeModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"><i data-lucide="x" class="w-4 h-4"></i></button>
+        </div>
+        <div class="p-5 sm:p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+          <div class="flex items-start gap-3 rounded-xl bg-cyan-500/5 border border-cyan-500/20 px-3.5 py-3">
+            <i data-lucide="shield-check" class="w-4 h-4 text-cyan-400 mt-0.5 shrink-0"></i>
+            <p class="text-[11px] text-slate-300 leading-relaxed">Aplikasi memakai <span class="text-white font-medium">Apps Script Web App</span> sebagai jembatan, jadi tidak perlu OAuth Client ID. URL dan token bersifat rahasia — siapa pun yang memilikinya dapat membaca/menulis file database Anda.</p>
+          </div>
+
+          <section class="space-y-2">
+            <div class="flex items-center justify-between gap-2">
+              <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-400">1. Script jembatan</h4>
+              <div class="flex gap-2">
+                <button onclick="refreshDriveScript()" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] text-slate-300">Acak token</button>
+                <button onclick="copyDriveScript()" class="px-2.5 py-1 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/30 text-[11px] text-cyan-200">Salin script</button>
+              </div>
+            </div>
+            <pre id="drive-script-pre" class="max-h-52 overflow-auto rounded-xl bg-slate-950 border border-slate-800 p-3 text-[10px] leading-relaxed text-slate-400 font-mono whitespace-pre"></pre>
+            <p class="text-[11px] text-slate-500 leading-relaxed">Buka <span class="text-slate-300 font-mono">script.google.com</span> → New project → tempel script di atas → <span class="text-slate-300">Deploy → New deployment → Web app</span> → Execute as <span class="text-slate-300">Me</span>, Who has access <span class="text-slate-300">Anyone</span> → Deploy → salin URL yang berakhiran <span class="font-mono text-slate-300">/exec</span>.</p>
+          </section>
+
+          <section class="space-y-2">
+            <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-400">2. URL Web App</h4>
+            <input id="drive-url-input" value="${esc(currentUrl)}" placeholder="https://script.google.com/macros/s/AKfy.../exec" class="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 focus:border-cyan-500 rounded-xl font-mono text-xs text-slate-200 outline-none" />
+            <label for="drive-token-input" class="block text-[11px] text-slate-500">Token (harus sama dengan <span class="font-mono">BRIDGE_TOKEN</span> di script)</label>
+            <div class="flex gap-2">
+              <input id="drive-token-input" value="${esc(token)}" class="flex-1 min-w-0 px-3.5 py-2.5 bg-slate-950 border border-slate-800 focus:border-cyan-500 rounded-xl font-mono text-xs text-slate-200 outline-none" />
+              <button onclick="copyDriveToken()" class="px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300">Salin</button>
+            </div>
+          </section>
+
+          <div id="drive-save-msg" class="hidden rounded-xl border px-3.5 py-2.5 text-[11px]"></div>
+
+          <div class="flex flex-col sm:flex-row justify-end gap-2 pt-1 border-t border-slate-800">
+            <button onclick="closeModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-sm text-slate-300">Batal</button>
+            <button onclick="saveDriveConnection()" id="drive-save-btn" class="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium"><i data-lucide="plug-zap" class="w-4 h-4"></i> Uji &amp; Simpan</button>
+          </div>
+        </div>
+      `, 'max-w-2xl');
+      const pre = document.getElementById('drive-script-pre');
+      if (pre) pre.textContent = buildDriveScript(token);
+    }
+
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (err) { /* fallback di bawah */ }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch (err) {
+        return false;
+      }
+    }
+
+    async function copyDriveScript() {
+      const pre = document.getElementById('drive-script-pre');
+      if (!pre) return;
+      const ok = await copyText(pre.textContent);
+      showToast(ok ? 'Script disalin. Tempel di Apps Script.' : 'Gagal menyalin otomatis. Salin manual dari kotak script.', ok ? 'success' : 'error');
+    }
+
+    async function copyDriveToken() {
+      const input = document.getElementById('drive-token-input');
+      if (!input) return;
+      const ok = await copyText(input.value.trim());
+      showToast(ok ? 'Token disalin.' : 'Gagal menyalin token.', ok ? 'success' : 'error');
+    }
+
+    function refreshDriveScript() {
+      const token = generateDriveToken();
+      setDriveTokenDraft(token);
+      const pre = document.getElementById('drive-script-pre');
+      if (pre) pre.textContent = buildDriveScript(token);
+      const input = document.getElementById('drive-token-input');
+      if (input) input.value = token;
+      showToast('Token baru dibuat. Salin ulang script dan perbarui BRIDGE_TOKEN di Apps Script.', 'info');
+    }
+
+    async function saveDriveConnection() {
+      const urlInput = document.getElementById('drive-url-input');
+      const tokenInput = document.getElementById('drive-token-input');
+      const msg = document.getElementById('drive-save-msg');
+      const btn = document.getElementById('drive-save-btn');
+      const url = (urlInput ? urlInput.value : '').trim();
+      const token = (tokenInput ? tokenInput.value : '').trim();
+
+      const showMsg = (text, type) => {
+        if (!msg) return;
+        msg.className = `rounded-xl border px-3.5 py-2.5 text-[11px] ${type === 'error' ? 'bg-rose-500/5 border-rose-500/20 text-rose-200/90' : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-200/90'}`;
+        msg.textContent = text;
+        msg.classList.remove('hidden');
+      };
+
+      if (!/^https?:\/\/.+/i.test(url)) {
+        showMsg('URL Web App tidak valid. Gunakan URL yang berakhiran /exec dari deployment Apps Script.', 'error');
+        return;
+      }
+      if (!/^[a-f0-9]{16,64}$/i.test(token)) {
+        showMsg('Token harus 16–64 karakter heksadesimal. Gunakan token dari script di atas.', 'error');
+        return;
+      }
+
+      const previous = driveConfig;
+      driveConfig = { url, token };
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Menguji koneksi...';
+        if (window.lucide) lucide.createIcons();
+      }
+      setDriveStatus('syncing');
+
+      try {
+        const meta = await driveJsonp('ping', 15000);
+        if (!meta || !meta.ok) throw new Error((meta && meta.error) || 'Respons tidak valid');
+        try {
+          localStorage.setItem(DRIVE_CONFIG_KEY, JSON.stringify(driveConfig));
+          setDriveTokenDraft(token);
+        } catch (err) { /* abaikan */ }
+        driveState.error = '';
+        driveReady = true;
+        setDriveStatus('connected');
+        showMsg(meta.exists ? 'Koneksi berhasil. File database ditemukan di Google Drive.' : 'Koneksi berhasil. File database akan dibuat saat sinkron pertama.', 'success');
+        showToast('Google Drive berhasil terhubung.', 'success');
+        closeModal();
+        if (uiState.currentView === 'backup') renderCurrentView();
+        updateDriveStatusUI();
+        await reconcileDrive(meta);
+      } catch (err) {
+        driveConfig = previous;
+        driveReady = false;
+        setDriveStatus(previous ? 'connected' : 'off');
+        showMsg('Gagal terhubung: ' + (err.message || err) + ' — pastikan deployment memakai akses "Anyone" dan URL berakhiran /exec.', 'error');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i data-lucide="plug-zap" class="w-4 h-4"></i> Uji &amp; Simpan';
+          if (window.lucide) lucide.createIcons();
+        }
+      }
+    }
+
+    function disconnectDrive() {
+      showConfirmModal(
+        'Putuskan Google Drive?',
+        'Sinkronisasi otomatis akan berhenti. Data lokal tetap tersimpan di browser dan file di Google Drive tidak dihapus.',
+        () => {
+          driveConfig = null;
+          driveReady = false;
+          clearTimeout(drivePushTimer);
+          drivePushTimer = null;
+          try { localStorage.removeItem(DRIVE_CONFIG_KEY); } catch (err) { /* abaikan */ }
+          setDriveStatus('off');
+          if (uiState.currentView === 'backup') renderCurrentView();
+          showToast('Koneksi Google Drive diputuskan.', 'info');
+        },
+        'Ya, Putuskan'
+      );
+    }
+
+    function showDriveConflictModal(mode) {
+      const remote = pendingDriveRemote || {};
+      const counts = countDriveRows(remote.data);
+      const isPull = mode === 'pull';
+      const remoteCount = counts ? `${counts.regionals} REG · ${counts.pops} POP · ${counts.hosts} IP` : '-';
+      const localCount = `${db.regionals.length} REG · ${db.pops.length} POP · ${db.hosts.length} IP`;
+      openModal(`
+        <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between gap-3">
+          <h3 class="text-base font-semibold text-white flex items-center gap-2"><i data-lucide="cloud-download" class="w-4 h-4 text-cyan-400"></i> ${isPull ? 'Muat Data dari Drive' : 'Data Drive Lebih Baru'}</h3>
+          <button onclick="closeModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"><i data-lucide="x" class="w-4 h-4"></i></button>
+        </div>
+        <div class="p-6 space-y-4">
+          <p class="text-sm text-slate-300 leading-relaxed">${isPull ? 'Data lokal akan diganti dengan isi file di Google Drive.' : 'File di Google Drive memiliki perubahan yang lebih baru daripada penyimpanan lokal browser ini.'}</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="rounded-xl bg-slate-950 border border-cyan-500/30 p-3.5">
+              <div class="text-[10px] uppercase tracking-wider text-cyan-300/80 font-semibold">Google Drive</div>
+              <div class="mt-1 text-xs text-slate-200 font-mono">${remoteCount}</div>
+              <div class="text-[11px] text-slate-500 mt-0.5">${esc(formatDriveTime(remote.savedAt))}</div>
+            </div>
+            <div class="rounded-xl bg-slate-950 border border-slate-800 p-3.5">
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Lokal (browser)</div>
+              <div class="mt-1 text-xs text-slate-200 font-mono">${localCount}</div>
+              <div class="text-[11px] text-slate-500 mt-0.5">${esc(formatDriveTime(getLocalUpdatedAt()))}</div>
+            </div>
+          </div>
+          <div class="rounded-xl bg-amber-500/5 border border-amber-500/20 px-3.5 py-2.5 text-[11px] text-amber-200/90 flex items-start gap-2">
+            <i data-lucide="alert-triangle" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i>
+            <span>Memuat data Drive akan menimpa perubahan lokal yang belum terunggah.</span>
+          </div>
+          <div class="flex flex-col sm:flex-row justify-end gap-2 pt-1">
+            ${isPull
+              ? '<button onclick="closeModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-sm text-slate-300">Batal</button>'
+              : '<button onclick="keepLocalDriveData()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm text-slate-200">Gunakan Data Lokal</button>'}
+            <button onclick="applyDriveRemote()" class="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium">Muat dari Drive</button>
+          </div>
+        </div>
+      `, 'max-w-lg');
+    }
+
+    function applyDriveRemote() {
+      if (!pendingDriveRemote || !pendingDriveRemote.data) { closeModal(); return; }
+      const normalized = normalizeDriveData(pendingDriveRemote.data);
+      if (!normalized) { showToast('Struktur data Drive tidak valid.', 'error'); closeModal(); return; }
+      driveSuppressPush = true;
+      db = normalized;
+      saveData();
+      try { localStorage.setItem(DRIVE_UPDATED_KEY, pendingDriveRemote.savedAt || new Date().toISOString()); } catch (err) { /* abaikan */ }
+      driveSuppressPush = false;
+      pendingDriveRemote = null;
+      driveReady = true;
+      closeModal();
+      uiState.selectedSubnetId = null;
+      renderCurrentView();
+      setDriveStatus('connected');
+      showToast('Data berhasil dimuat dari Google Drive.', 'success');
+    }
+
+    function keepLocalDriveData() {
+      pendingDriveRemote = null;
+      closeModal();
+      driveReady = true;
+      setDriveStatus('connected');
+      drivePush();
+    }
+
+    function scheduleDrivePush() {
+      if (!driveConfig || !driveReady) return;
+      clearTimeout(drivePushTimer);
+      drivePushTimer = setTimeout(() => {
+        drivePushTimer = null;
+        drivePush(true);
+      }, 1400);
+    }
+
+    async function verifyDrivePush(clientId) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt) await new Promise(resolve => setTimeout(resolve, 800));
+        try {
+          const meta = await driveJsonp('meta', 15000);
+          if (meta && meta.ok && meta.exists && meta.lastClientId === clientId) return meta;
+        } catch (err) { /* coba lagi */ }
+      }
+      return null;
+    }
+
+    async function drivePush(silent = false) {
+      if (!driveConfig) { if (!silent) openDriveSetupModal(); return false; }
+      if (driveState.busy) return false;
+      clearTimeout(drivePushTimer);
+      drivePushTimer = null;
+      const clientId = uid('drv');
+      const savedAt = new Date().toISOString();
+      setDriveStatus('syncing');
+      try {
+        await fetch(driveConfig.url, {
+          method: 'POST',
+          mode: 'no-cors',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ token: driveConfig.token, action: 'push', savedAt, clientId, data: db })
+        });
+        const meta = await verifyDrivePush(clientId);
+        if (!meta) throw new Error('Perubahan belum terkonfirmasi di Drive. Periksa deployment Apps Script.');
+        try { localStorage.setItem(DRIVE_UPDATED_KEY, savedAt); } catch (err) { /* abaikan */ }
+        driveReady = true;
+        setDriveStatus('connected');
+        if (!silent) showToast('Database berhasil disinkronkan ke Google Drive.', 'success');
+        return true;
+      } catch (err) {
+        setDriveStatus('error', err.message || 'Gagal sinkron ke Drive');
+        if (!silent) showToast('Sinkron Drive gagal: ' + (err.message || err), 'error');
+        return false;
+      }
+    }
+
+    async function drivePull(manual = false) {
+      if (!driveConfig) { openDriveSetupModal(); return; }
+      setDriveStatus('syncing');
+      try {
+        const res = await driveJsonp('pull', 20000);
+        if (!res || !res.ok) throw new Error((res && res.error) || 'Respons tidak valid');
+        if (!res.exists || !res.data) {
+          setDriveStatus('connected');
+          if (manual) showToast('Belum ada file database di Google Drive. Tekan Sinkron Sekarang untuk mengunggah data lokal.', 'warning');
+          return;
+        }
+        const normalized = normalizeDriveData(res.data);
+        if (!normalized) throw new Error('Struktur data di Drive tidak dikenali');
+        pendingDriveRemote = { savedAt: res.savedAt || new Date().toISOString(), data: normalized };
+        setDriveStatus('connected');
+        showDriveConflictModal('pull');
+      } catch (err) {
+        setDriveStatus('error', err.message || 'Gagal mengambil data dari Drive');
+        showToast('Tarik data Drive gagal: ' + (err.message || err), 'error');
+      }
+    }
+
+    async function reconcileDrive(meta) {
+      const localAt = getLocalUpdatedAt();
+      const remoteAt = meta && meta.savedAt ? meta.savedAt : '';
+      if (!meta || !meta.exists) {
+        driveReady = true;
+        await drivePush(true);
+        return;
+      }
+      if (!remoteAt) {
+        if (!localAt) await drivePush(true);
+        return;
+      }
+      const remoteTime = new Date(remoteAt).getTime();
+      const localTime = localAt ? new Date(localAt).getTime() : 0;
+      if (remoteTime > localTime + 1500) {
+        const res = await driveJsonp('pull', 20000);
+        if (res && res.ok && res.data) {
+          const normalized = normalizeDriveData(res.data);
+          if (normalized) {
+            pendingDriveRemote = { savedAt: res.savedAt || remoteAt, data: normalized };
+            showDriveConflictModal('conflict');
+            return;
+          }
+        }
+        setDriveStatus('error', 'Gagal membaca data terbaru dari Drive.');
+        return;
+      }
+      driveReady = true;
+      setDriveStatus('connected');
+      if (localTime > remoteTime + 1500) await drivePush(true);
+    }
+
+    async function initDrive() {
+      updateDriveStatusUI();
+      if (!driveConfig) return;
+      setDriveStatus('syncing');
+      try {
+        const meta = await driveJsonp('ping', 15000);
+        if (!meta || !meta.ok) throw new Error((meta && meta.error) || 'Respons tidak valid');
+        driveReady = true;
+        setDriveStatus('connected');
+        await reconcileDrive(meta);
+      } catch (err) {
+        driveReady = false;
+        setDriveStatus('error', err.message || 'Tidak dapat menghubungi Google Drive');
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      navigate('dashboard');
+      initDrive();
+    });
   </script>
 </body>
 </html>
