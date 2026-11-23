@@ -607,7 +607,7 @@
     function addLog(action, detail, type = 'cyan') {
       db.logs.unshift({ id: uid('log'), time: formatTimeNow(), action, detail, type });
       if (db.logs.length > 30) db.logs.length = 30;
-      saveData();
+      ;
     }
 
     function getRegionalById(id) { return db.regionals.find(r => r.id === id) || null; }
@@ -2237,7 +2237,7 @@
       }
       db.regionals.push({ id: uid('reg'), code, name, areas, description });
       addLog('Tambah Regional', `${name} (${areas}) ditambahkan`, 'cyan');
-      saveData();
+      ;
       closeModal();
       showToast(`${name} berhasil ditambahkan.`);
       renderCurrentView();
@@ -2352,7 +2352,7 @@
         showToast(`POP ${payload.name} (${payload.code}) berhasil ditambahkan.`);
       }
 
-      saveData();
+      ;
       if (isQuick) {
         closeSubModal();
         if (typeof quickPopCallback === 'function') quickPopCallback(payload);
@@ -2376,7 +2376,7 @@
         () => {
           db.pops = db.pops.filter(p => p.id !== popId);
           addLog('Hapus POP', `${pop.name} (${pop.code}) dihapus`, 'rose');
-          saveData();
+          ;
           showToast(`POP ${pop.name} berhasil dihapus.`, 'warning');
           renderCurrentView();
         },
@@ -2553,7 +2553,7 @@
         showToast(`Subnet ${payload.cidr} berhasil ditambahkan.`);
       }
 
-      saveData();
+      ;
       closeModal();
       renderCurrentView();
     }
@@ -2570,7 +2570,7 @@
           db.hosts = db.hosts.filter(h => h.subnetId !== subnetId);
           if (uiState.selectedSubnetId === subnetId) uiState.selectedSubnetId = null;
           addLog('Hapus Subnet', `Subnet ${sub.cidr} dihapus`, 'rose');
-          saveData();
+          ;
           showToast(`Subnet ${sub.cidr} berhasil dihapus.`, 'warning');
           renderCurrentView();
         },
@@ -2678,7 +2678,7 @@
         if (existingId) {
           db.hosts = db.hosts.filter(h => h.id !== existingId);
           addLog('Lepas IP', `${ip} dikembalikan ke status Available`, 'amber');
-          saveData();
+          ;
           showToast(`IP ${ip} dilepas.`);
         }
         closeModal(); renderCurrentView(); return;
@@ -2705,7 +2705,7 @@
         addLog('Assign IP', `${ip} → ${payload.hostname || '-'} (${payload.vendor})`, 'emerald');
         showToast(`IP ${ip} berhasil dialokasikan.`);
       }
-      saveData(); closeModal(); renderCurrentView();
+      ; closeModal(); renderCurrentView();
     }
 
     function deleteHost(hostId) {
@@ -2714,7 +2714,7 @@
       showConfirmModal('Lepas Alokasi IP?', `Lepas IP ${host.ip} (${host.hostname || '-'}) agar kembali Available?`, () => {
         db.hosts = db.hosts.filter(h => h.id !== hostId);
         addLog('Lepas IP', `${host.ip} dilepas`, 'amber');
-        saveData(); showToast(`IP ${host.ip} dilepas.`); renderCurrentView();
+        ; showToast(`IP ${host.ip} dilepas.`); renderCurrentView();
       }, 'Ya, Lepas IP');
     }
 
@@ -2835,7 +2835,7 @@
         addLog('Tambah VLAN', `VLAN ${payload.vlanId} (${payload.name}) di ${pop ? pop.name : '-'}`, 'violet');
         showToast(`VLAN ${payload.vlanId} berhasil ditambahkan.`);
       }
-      saveData(); closeModal(); renderCurrentView();
+      fetch(); closeModal(); renderCurrentView();
     }
 
     function deleteVlan(vlanRefId) {
@@ -2845,7 +2845,7 @@
         db.vlans = db.vlans.filter(x => x.id !== vlanRefId);
         db.subnets.forEach(s => { if (s.vlanRefId === vlanRefId) s.vlanRefId = ''; });
         addLog('Hapus VLAN', `VLAN ${v.vlanId} dihapus`, 'rose');
-        saveData(); showToast(`VLAN ${v.vlanId} dihapus.`, 'warning'); renderCurrentView();
+        fetch(); showToast(`VLAN ${v.vlanId} dihapus.`, 'warning'); renderCurrentView();
       }, 'Ya, Hapus VLAN');
     }
 
@@ -3558,7 +3558,7 @@
             logs: Array.isArray(parsed.logs) ? parsed.logs : []
           };
           addLog('Restore Data', `Database dipulihkan dari ${file.name} (${db.regionals.length} regional, ${db.pops.length} POP, ${db.subnets.length} subnet, ${db.vlans.length} VLAN, ${db.hosts.length} IP host)`, 'emerald');
-          saveData();
+          fetch();
           uiState.selectedSubnetId = null;
           renderCurrentView();
           showToast('Database berhasil dipulihkan dari JSON.');
@@ -3576,7 +3576,7 @@
         'Seluruh perubahan lokal akan diganti dengan data demo 4 Regional (Jakarta, Bekasi, Pekalongan, Bandung, Lombok, NTT). Lanjutkan?',
         () => {
           db = getDefaultData();
-          saveData();
+          fetch();
           uiState.selectedSubnetId = null;
           uiState.dashFilterReg = 'ALL'; uiState.dashFilterPop = 'ALL';
           navigate('dashboard');
